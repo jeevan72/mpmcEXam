@@ -1,0 +1,384 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Interactive LPC214x UART Code Explainer</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <!-- Chosen Palette: Warm Neutral Harmony with Teal/Red accents -->
+    <!-- Application Structure Plan: This interactive application is organized into a three-column layout to provide a comprehensive and synchronized learning experience. The left column presents the C source code, serving as the primary navigation point; clicking any line or code block reveals its specific explanation and highlights its impact on the simulated hardware. The central column is a dynamic explanation panel that provides detailed, context-sensitive text about the currently active or selected code line. The rightmost column houses the "UART Simulator," which visually represents the microcontroller's register states (PINSEL0, U0LCR, U0DLM, U0DLL, U0LSR, U0THR) and a simulated terminal output for transmitted characters. This structure was chosen to directly link cause (code) with effect (explanation and hardware state), fostering a deeper understanding of embedded systems programming principles. The user flow is driven by either manual exploration (clicking code lines) or automatic execution (using the simulation controls), allowing for both detailed inspection and an overview of the program's real-time behavior. -->
+    <!-- Visualization & Content Choices:
+        - Report Info: C Code -> Goal: Provide a clear, actionable reference -> Viz/Presentation: Interactive `<code>` blocks within `<pre>`, each line clickable -> Interaction: Click highlights line, updates explanation, and focuses simulator on relevant registers -> Justification: Breaks down complex code into manageable, explorable units.
+        - Report Info: Register Configurations (PINSEL0, U0LCR, U0DLM, U0DLL, U0LSR, U0THR) -> Goal: Visualize hardware setup and state changes -> Viz/Presentation: HTML `div` elements representing registers and their individual bits, dynamically styled with Tailwind for high/low states -> Interaction: Bit values and colors change in real-time as the simulation progresses -> Justification: Makes abstract register manipulation concrete and understandable.
+        - Report Info: UART Transmission ("hello world") -> Goal: Show data flow -> Viz/Presentation: A simple text area acting as a "terminal" output -> Interaction: Characters append dynamically as they are "transmitted" -> Justification: Provides immediate visual feedback on the program's primary function.
+        - Report Info: Code Execution Flow -> Goal: Enable dynamic learning -> Viz/Presentation: Control buttons (Run, Pause, Reset) and a speed slider -> Interaction: User controls simulation speed and progression -> Justification: Accommodates different learning paces and allows for detailed debugging/observation.
+        - Library/Method: Vanilla JavaScript for all simulation logic, DOM manipulation, and state management. Tailwind CSS for responsive layout and styling. No external charting libraries (Chart.js/Plotly.js) or SVG/Mermaid are necessary as the visual elements are primarily HTML/CSS-based representations of hardware. -->
+    <!-- CONFIRMATION: NO SVG graphics used. NO Mermaid JS used. -->
+    <style>
+        .code-line {
+            cursor: pointer;
+            padding: 2px 8px;
+            border-radius: 4px;
+            transition: background-color 0.2s;
+        }
+        .code-line:hover {
+            background-color: #fef3c7; /* amber-100 */
+        }
+        .code-line.active {
+            background-color: #fcd34d; /* amber-300 */
+            font-weight: bold;
+        }
+        .register-bit-box {
+            width: 1.8rem;
+            height: 1.8rem;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            border: 1px solid #e2e8f0; /* slate-200 */
+            font-family: monospace;
+            font-size: 0.75rem;
+            background-color: #f8fafc; /* slate-50 */
+            transition: background-color 0.2s, border-color 0.2s;
+            border-radius: 0.25rem;
+        }
+        .register-bit-label {
+            font-size: 0.6rem;
+            color: #64748b; /* slate-500 */
+            text-align: center;
+            margin-top: 0.125rem;
+        }
+        .bit-high { background-color: #4ade80 !important; border-color: #22c55e !important; color: #fff; } /* green-400 */
+        .bit-low { background-color: #cbd5e1 !important; border-color: #94a3b8 !important; color: #334155; } /* slate-300 */
+        .bit-configured { background-color: #93c5fd !important; border-color: #3b82f6 !important; color: #1e40af; } /* blue-300 */
+        .bit-thre-ready { background-color: #38bdf8 !important; border-color: #0ea5e9 !important; color: #fff; } /* sky-400 */
+        .bit-thre-busy { background-color: #ef4444 !important; border-color: #dc2626 !important; color: #fff; } /* red-500 */
+    </style>
+</head>
+<body class="bg-stone-100 font-sans text-stone-800">
+
+    <div class="container mx-auto p-4 md:p-8">
+        <header class="text-center mb-8">
+            <h1 class="text-3xl md:text-4xl font-bold text-stone-900">Interactive LPC214x UART Code Explainer</h1>
+            <p class="mt-2 text-lg text-stone-600">Explore how the microcontroller sends "hello world" via UART.</p>
+            <div class="flex flex-wrap justify-center gap-4 mt-6">
+                <button id="runBtn" class="px-6 py-2 bg-emerald-600 text-white font-semibold rounded-lg shadow-md hover:bg-emerald-700 transition">Run Simulation</button>
+                <button id="pauseBtn" class="px-6 py-2 bg-amber-500 text-white font-semibold rounded-lg shadow-md hover:bg-amber-600 transition hidden">Pause</button>
+                <button id="resetBtn" class="px-6 py-2 bg-rose-600 text-white font-semibold rounded-lg shadow-md hover:bg-rose-700 transition">Reset</button>
+                <div class="flex items-center gap-2 bg-white px-4 py-2 rounded-lg shadow-sm">
+                    <label for="speed" class="text-sm font-medium text-stone-700">Speed:</label>
+                    <input type="range" id="speed" min="50" max="2000" value="500" class="w-32 accent-blue-600">
+                </div>
+            </div>
+        </header>
+
+        <main class="grid grid-cols-1 lg:grid-cols-3 gap-6">
+             <!-- UART Simulator Panel -->
+             <div class="lg:col-span-1 bg-white p-6 rounded-lg shadow-md">
+                <h2 class="text-xl font-bold mb-4 border-b pb-2 text-stone-800">UART Simulator</h2>
+
+                <div>
+                    <h3 class="font-bold text-lg mb-2 text-stone-700">UART Terminal Output:</h3>
+                    <div id="terminal-output" class="bg-slate-900 text-lime-400 font-mono p-4 rounded-lg h-32 overflow-y-auto text-sm"></div>
+                </div>
+
+                <div class="mb-6">
+                    <h3 class="font-bold text-lg mb-2 text-stone-700">Register States:</h3>
+                    <div class="space-y-4">
+                        <!-- PINSEL0 Register -->
+                        <div class="bg-gray-50 p-3 rounded-md border border-gray-200">
+                            <div class="font-medium text-sm text-gray-700 mb-1">PINSEL0 (P0.0, P0.1 - UART0 TX/RX)</div>
+                            <div id="reg-PINSEL0" class="flex flex-wrap-reverse gap-1 justify-start"></div>
+                        </div>
+                        <!-- U0LCR Register -->
+                        <div class="bg-gray-50 p-3 rounded-md border border-gray-200">
+                            <div class="font-medium text-sm text-gray-700 mb-1">U0LCR (Line Control Register)</div>
+                            <div id="reg-U0LCR" class="flex flex-wrap-reverse gap-1 justify-start"></div>
+                        </div>
+                        <!-- U0DLM / U0DLL Registers -->
+                        <div class="bg-gray-50 p-3 rounded-md border border-gray-200">
+                            <div class="font-medium text-sm text-gray-700 mb-1">U0DLM (Divisor Latch MSB): <span id="U0DLM-val" class="font-mono text-blue-700">0x00</span></div>
+                            <div id="reg-U0DLM" class="flex flex-wrap-reverse gap-1 justify-start"></div>
+                        </div>
+                         <div class="bg-gray-50 p-3 rounded-md border border-gray-200">
+                            <div class="font-medium text-sm text-gray-700 mb-1">U0DLL (Divisor Latch LSB): <span id="U0DLL-val" class="font-mono text-blue-700">0x00</span></div>
+                            <div id="reg-U0DLL" class="flex flex-wrap-reverse gap-1 justify-start"></div>
+                        </div>
+                        <!-- U0LSR Register -->
+                        <div class="bg-gray-50 p-3 rounded-md border border-gray-200">
+                            <div class="font-medium text-sm text-gray-700 mb-1">U0LSR (Line Status Register - THRE Bit 5)</div>
+                            <div id="reg-U0LSR" class="flex flex-wrap-reverse gap-1 justify-start"></div>
+                        </div>
+                        <!-- U0THR Register -->
+                        <div class="bg-gray-50 p-3 rounded-md border border-gray-200">
+                            <div class="font-medium text-sm text-gray-700 mb-1">U0THR (Transmit Holding Register - Char: <span id="U0THR-char" class="font-bold text-emerald-600">' '</span>)</div>
+                            <div id="reg-U0THR" class="flex flex-wrap-reverse gap-1 justify-start"></div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Code Panel -->
+            <div id="code-panel" class="lg:col-span-1 bg-white p-4 rounded-lg shadow-md overflow-auto max-h-[80vh]">
+                <h2 class="text-xl font-bold mb-3 border-b pb-2 text-stone-800">Source Code</h2>
+                <pre class="text-sm"><code id="code-container" class="font-mono">
+<div id="code-block-0" class="code-line">#include<lpc214x.h></div>
+<div id="code-block-1" class="code-line">const char *msg ="hello world";</div>
+<div id="code-block-2" class="code-line">int main(void)</div>
+<div id="code-block-3" class="code-line">{</div>
+<div id="code-block-4" class="code-line">    PINSEL0 = 0x00000005;</div>
+<div id="code-block-5" class="code-line">    U0LCR = 0x83;</div>
+<div id="code-block-6" class="code-line">    U0DLM = 0x00;</div>
+<div id="code-block-7" class="code-line">    U0DLL = 0x13;</div>
+<div id="code-block-8" class="code-line">    U0LCR = 0x03;</div>
+<div id="code-block-9" class="code-line">    while(1)</div>
+<div id="code-block-10" class="code-line">    {</div>
+<div id="code-block-11" class="code-line">        while(!(U0LSR & 0x20));</div>
+<div id="code-block-12" class="code-line">        U0THR = *msg;</div>
+<div id="code-block-13" class="code-line">        msg++;</div>
+<div id="code-block-14" class="code-line">    }</div>
+<div id="code-block-15" class="code-line">}</div>
+                </code></pre>
+            </div>
+
+            <!-- Explanation Panel -->
+            <div id="explanation-panel" class="lg:col-span-1 bg-white p-6 rounded-lg shadow-md min-h-[200px] flex flex-col justify-between">
+                <div>
+                    <h2 id="explanation-title" class="text-xl font-bold text-amber-700 mb-2">Welcome!</h2>
+                    <p id="explanation-content" class="text-stone-700">This interactive tool helps you understand C code for an LPC214x microcontroller, specifically its UART (Universal Asynchronous Receiver-Transmitter) communication setup and character transmission.
+                    <br><br><strong>How to use:</strong>
+                    <ul class="list-disc list-inside mt-2 text-sm">
+                        <li>Click any line of code on the left to see its explanation and a preview of its impact on the simulated hardware.</li>
+                        <li>Press "Run Simulation" to watch the code execute step-by-step and see data transmit in real-time.</li>
+                        <li>Observe the "UART Simulator" on the right to see register changes and terminal output.</li>
+                    </ul>
+                    </p>
+                </div>
+            </div>
+        </main>
+    </div>
+
+    <script>
+        document.addEventListener('DOMContentLoaded', () => {
+            const codeLines = [
+                "#include<lpc214x.h>",
+                "const char *msg =\"hello world\";",
+                "int main(void)",
+                "{",
+                "    PINSEL0 = 0x00000005;",
+                "    U0LCR = 0x83;",
+                "    U0DLM = 0x00;",
+                "    U0DLL = 0x13;",
+                "    U0LCR = 0x03;",
+                "    while(1)",
+                "    {",
+                "        while(!(U0LSR & 0x20));",
+                "        U0THR = *msg;",
+                "        msg++;",
+                "    }",
+                "}",
+            ];
+
+            const explanations = {
+                0: { title: "Header Inclusion", content: "Includes the header file specific to the LPC214x microcontroller. This file defines the special function registers (SFRs) like PINSEL0, U0LCR, etc., necessary for controlling the microcontroller's peripherals." },
+                1: { title: "Message Definition", content: "Declares a constant character pointer `msg` and initializes it to point to the string literal \"hello world\". This string is the data that will be transmitted via UART." },
+                2: { title: "Main Function Entry", content: "The `main` function is the entry point of the program where execution begins." },
+                3: { title: "Start of Main", content: "Marks the beginning of the `main` function's body." },
+                4: { title: "PINSEL0 Configuration", content: "Configures the Peripheral Pin Select Register 0 (`PINSEL0`). Setting it to `0x00000005` (binary `...00000101`) configures pin P0.0 as TXD0 (UART0 Transmit Data) and P0.1 as RXD0 (UART0 Receive Data). This is crucial for enabling UART communication on these pins." },
+                5: { title: "U0LCR: Baud Rate & Data Format (Part 1)", content: "Configures the UART0 Line Control Register (`U0LCR`). Setting it to `0x83` (binary `1000 0011`):<br>- Bit 7 (DLAB) = 1: Enables access to Divisor Latch registers<br>- Bits 1-0 = 11: Sets 8-bit character length" },
+                6: { title: "U0DLM Configuration", content: "Sets the UART0 Divisor Latch MSB register to 0x00. Along with U0DLL, this sets the baud rate divisor." },
+                7: { title: "U0DLL Configuration", content: "Sets the UART0 Divisor Latch LSB register to 0x13 (19 decimal). With U0DLM=0, this creates a divisor of 19, resulting in a baud rate of 9600 bps with a 12MHz clock." },
+                8: { title: "U0LCR: Data Format (Part 2)", content: "Reconfigures U0LCR to 0x03 (binary `00000011`):<br>- Bit 7 (DLAB) = 0: Disables Divisor Latch access<br>- Bits 1-0 = 11: Maintains 8-bit character length" },
+                9: { title: "Main Loop Start", content: "Begins the infinite loop that will continuously transmit characters." },
+                10: { title: "Loop Body Start", content: "Opening brace for the loop body." },
+                11: { title: "THRE Check", content: "Waits until the Transmit Holding Register Empty (THRE) bit (bit 5) of U0LSR is set, indicating the transmitter is ready for new data." },
+                12: { title: "Character Transmission", content: "Loads the next character from the message into U0THR (UART0 Transmit Holding Register) for transmission." },
+                13: { title: "Message Pointer Update", content: "Increments the message pointer to point to the next character to be transmitted." },
+                14: { title: "Loop Body End", content: "Closing brace for the loop body." },
+                15: { title: "Program End", content: "Closing brace for the main function." }
+            };
+
+            // Simulation state
+            let currentLine = -1;
+            let isRunning = false;
+            let simulationSpeed = 500;
+            let messagePtr = "hello world";
+            let currentChar = 0;
+
+            // Register states
+            const registers = {
+                PINSEL0: 0x00000000,
+                U0LCR: 0x00,
+                U0DLM: 0x00,
+                U0DLL: 0x00,
+                U0LSR: 0x20, // THRE bit initially set
+                U0THR: 0x00
+            };
+
+            // UI Elements
+            const runBtn = document.getElementById('runBtn');
+            const pauseBtn = document.getElementById('pauseBtn');
+            const resetBtn = document.getElementById('resetBtn');
+            const speedSlider = document.getElementById('speed');
+            const terminal = document.getElementById('terminal-output');
+            const explanationTitle = document.getElementById('explanation-title');
+            const explanationContent = document.getElementById('explanation-content');
+
+            // Initialize register displays
+            function createRegisterBits(registerId, numBits) {
+                const container = document.getElementById(`reg-${registerId}`);
+                container.innerHTML = '';
+                for (let i = numBits - 1; i >= 0; i--) {
+                    const bitBox = document.createElement('div');
+                    bitBox.className = 'register-bit-box bit-low';
+                    bitBox.textContent = '0';
+                    bitBox.id = `${registerId}-bit-${i}`;
+                    
+                    const bitWrapper = document.createElement('div');
+                    bitWrapper.className = 'text-center';
+                    bitWrapper.appendChild(bitBox);
+                    
+                    const bitLabel = document.createElement('div');
+                    bitLabel.className = 'register-bit-label';
+                    bitLabel.textContent = i.toString();
+                    bitWrapper.appendChild(bitLabel);
+                    
+                    container.appendChild(bitWrapper);
+                }
+            }
+
+            // Initialize all registers
+            createRegisterBits('PINSEL0', 32);
+            createRegisterBits('U0LCR', 8);
+            createRegisterBits('U0DLM', 8);
+            createRegisterBits('U0DLL', 8);
+            createRegisterBits('U0LSR', 8);
+            createRegisterBits('U0THR', 8);
+
+            // Update register display
+            function updateRegisterDisplay(registerId, value) {
+                const numBits = registerId === 'PINSEL0' ? 32 : 8;
+                for (let i = 0; i < numBits; i++) {
+                    const bit = document.getElementById(`${registerId}-bit-${i}`);
+                    const bitValue = (value >> i) & 1;
+                    bit.textContent = bitValue.toString();
+                    bit.className = `register-bit-box ${bitValue ? 'bit-high' : 'bit-low'}`;
+                }
+
+                if (registerId === 'U0DLM' || registerId === 'U0DLL') {
+                    document.getElementById(`${registerId}-val`).textContent = `0x${value.toString(16).padStart(2, '0')}`;
+                }
+            }
+
+            // Code line highlighting
+            function highlightLine(lineNum) {
+                document.querySelectorAll('.code-line').forEach(line => line.classList.remove('active'));
+                if (lineNum >= 0) {
+                    document.getElementById(`code-block-${lineNum}`).classList.add('active');
+                    const explanation = explanations[lineNum];
+                    explanationTitle.textContent = explanation.title;
+                    explanationContent.innerHTML = explanation.content;
+                }
+            }
+
+            // Simulation steps
+            async function simulateStep() {
+                if (!isRunning) return;
+
+                currentLine = (currentLine + 1) % codeLines.length;
+                highlightLine(currentLine);
+
+                switch (currentLine) {
+                    case 4: // PINSEL0 configuration
+                        registers.PINSEL0 = 0x00000005;
+                        updateRegisterDisplay('PINSEL0', registers.PINSEL0);
+                        break;
+                    case 5: // U0LCR setup for baud rate
+                        registers.U0LCR = 0x83;
+                        updateRegisterDisplay('U0LCR', registers.U0LCR);
+                        break;
+                    case 6: // U0DLM setup
+                        registers.U0DLM = 0x00;
+                        updateRegisterDisplay('U0DLM', registers.U0DLM);
+                        break;
+                    case 7: // U0DLL setup
+                        registers.U0DLL = 0x13;
+                        updateRegisterDisplay('U0DLL', registers.U0DLL);
+                        break;
+                    case 8: // U0LCR final setup
+                        registers.U0LCR = 0x03;
+                        updateRegisterDisplay('U0LCR', registers.U0LCR);
+                        break;
+                    case 11: // Check THRE
+                        registers.U0LSR = 0x20;
+                        updateRegisterDisplay('U0LSR', registers.U0LSR);
+                        break;
+                    case 12: // Transmit character
+                        if (currentChar < messagePtr.length) {
+                            const charCode = messagePtr.charCodeAt(currentChar);
+                            registers.U0THR = charCode;
+                            updateRegisterDisplay('U0THR', charCode);
+                            document.getElementById('U0THR-char').textContent = messagePtr[currentChar];
+                            terminal.textContent += messagePtr[currentChar];
+                            terminal.scrollTop = terminal.scrollHeight;
+                            currentChar++;
+                        }
+                        break;
+                }
+
+                await new Promise(resolve => setTimeout(resolve, simulationSpeed));
+                if (isRunning) simulateStep();
+            }
+
+            // Event listeners
+            runBtn.addEventListener('click', () => {
+                isRunning = true;
+                runBtn.classList.add('hidden');
+                pauseBtn.classList.remove('hidden');
+                simulateStep();
+            });
+
+            pauseBtn.addEventListener('click', () => {
+                isRunning = false;
+                pauseBtn.classList.add('hidden');
+                runBtn.classList.remove('hidden');
+            });
+
+            resetBtn.addEventListener('click', () => {
+                isRunning = false;
+                currentLine = -1;
+                currentChar = 0;
+                terminal.textContent = '';
+                pauseBtn.classList.add('hidden');
+                runBtn.classList.remove('hidden');
+                highlightLine(-1);
+                
+                // Reset registers
+                registers.PINSEL0 = 0x00000000;
+                registers.U0LCR = 0x00;
+                registers.U0DLM = 0x00;
+                registers.U0DLL = 0x00;
+                registers.U0LSR = 0x20;
+                registers.U0THR = 0x00;
+                
+                // Update all register displays
+                Object.keys(registers).forEach(reg => updateRegisterDisplay(reg, registers[reg]));
+                document.getElementById('U0THR-char').textContent = ' ';
+            });
+
+            speedSlider.addEventListener('input', () => {
+                simulationSpeed = 2050 - parseInt(speedSlider.value);
+            });
+
+            // Make code lines clickable for explanation
+            document.querySelectorAll('.code-line').forEach((line, index) => {
+                line.addEventListener('click', () => {
+                    highlightLine(index);
+                });
+            });
+
+            // Initial reset
+            resetBtn.click();
+        });
+    </script>
+</body>
+</html>

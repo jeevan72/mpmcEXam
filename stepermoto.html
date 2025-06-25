@@ -1,0 +1,413 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Interactive Stepper Motor C Code Analyzer</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <!-- Chosen Palette: Slate -->
+    <!-- Application Structure Plan: The application is structured as a two-column interactive dashboard. The left column displays the C code and simulation controls, grounding the user in the source material. The right column provides dynamic visualizations: the state of microcontroller registers, an animated stepper motor, and a context-sensitive explanation panel. This structure is designed to transform the static text-based explanation into an active learning experience. By separating code from its visual consequences, users can clearly see the cause-and-effect relationship, which is crucial for understanding embedded systems programming. The user flow is centered around running a simulation, which simultaneously highlights the executing code, updates the hardware state, and displays the relevant explanation, providing a holistic and synchronized view of the process. -->
+    <!-- Visualization & Content Choices: 
+        - Report Info: C Code -> Goal: Provide a stable reference -> Viz/Presentation: Syntax-highlighted <pre> block -> Interaction: A moving highlight follows the execution -> Justification: Keeps the user anchored to the original code while showing the dynamic flow.
+        - Report Info: Register values (IO0DIR, IO0PIN) -> Goal: Show hardware state changes -> Viz/Presentation: Dynamic HTML/CSS divs representing bits -> Interaction: Bit values change as the simulation runs -> Justification: Makes the abstract concept of register manipulation tangible.
+        - Report Info: Stepper Motor Rotation -> Goal: Show the physical outcome -> Viz/Presentation: HTML5 Canvas animation -> Interaction: The motor's rotor turns in sync with the code -> Justification: Provides a satisfying and clear visual reward that demonstrates the code's purpose.
+        - Report Info: Textual Explanations -> Goal: Provide context for each step -> Viz/Presentation: A dedicated text panel -> Interaction: The text updates to explain the currently highlighted line of code -> Justification: Delivers information at the exact moment it's most relevant, improving comprehension.
+        - Report Info: Overall program flow -> Goal: Allow user-paced learning -> Viz/Presentation: Control buttons and a speed slider -> Interaction: User can run, pause, step, and change the speed of the simulation -> Justification: Caters to different learning styles and allows for detailed inspection of complex parts like loops.
+        - Library/Method: Vanilla JavaScript for all simulation logic and DOM manipulation; Tailwind CSS for styling. -->
+    <!-- CONFIRMATION: NO SVG graphics used. NO Mermaid JS used. -->
+    <style>
+        body { font-family: 'Inter', sans-serif; }
+        .code-line { transition: background-color 0.3s; padding: 0 1rem; }
+        .highlight { background-color: rgba(71, 85, 105, 0.2); }
+        .bit-box {
+            width: 2rem; height: 2rem;
+            display: flex; align-items: center; justify-content: center;
+            border: 1px solid #cbd5e1;
+            font-family: monospace;
+            font-size: 0.8rem;
+        }
+        .bit-label { font-size: 0.65rem; text-align: center; color: #64748b; }
+    </style>
+     <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=Roboto+Mono:wght@400;500&display=swap" rel="stylesheet">
+</head>
+<body class="bg-slate-50 text-slate-800">
+
+    <div class="container mx-auto p-4 md:p-8">
+        <header class="text-center mb-8">
+            <h1 class="text-3xl md:text-4xl font-bold text-slate-900">Interactive Stepper Motor Code Analyzer</h1>
+            <p class="mt-2 text-slate-600 max-w-3xl mx-auto">This tool visualizes the execution of a C program for an LPC21xx microcontroller. Press 'Run' to see how the code controls a stepper motor in real-time.</p>
+        </header>
+
+        <div class="grid grid-cols-1 lg:grid-cols-2 gap-8">
+            <!-- Left Column: Code and Controls -->
+            <div class="bg-white p-6 rounded-lg shadow-lg">
+                <h2 class="text-xl font-semibold mb-4 text-slate-900">Controller Code</h2>
+                <div id="controls" class="flex flex-wrap items-center gap-4 mb-4 pb-4 border-b border-slate-200">
+                    <button id="runBtn" class="px-4 py-2 bg-blue-600 text-white font-semibold rounded-lg shadow-md hover:bg-blue-700 transition">Run</button>
+                    <button id="pauseBtn" class="px-4 py-2 bg-yellow-500 text-white font-semibold rounded-lg shadow-md hover:bg-yellow-600 transition hidden">Pause</button>
+                    <button id="resetBtn" class="px-4 py-2 bg-red-600 text-white font-semibold rounded-lg shadow-md hover:bg-red-700 transition">Reset</button>
+                    <div class="flex items-center gap-2">
+                        <label for="speed" class="text-sm font-medium">Speed:</label>
+                        <input type="range" id="speed" min="10" max="1000" value="500" class="w-32">
+                    </div>
+                </div>
+                <div class="bg-slate-900 rounded-lg p-4 overflow-x-auto text-sm">
+                    <pre><code id="code-display" class="language-c text-white" style="font-family: 'Roboto Mono', monospace;"></code></pre>
+                </div>
+            </div>
+
+            <!-- Right Column: Visualizations -->
+            <div class="space-y-8">
+                <div class="bg-white p-6 rounded-lg shadow-lg">
+                    <h2 class="text-xl font-semibold mb-4 text-slate-900">Live Visualization</h2>
+                    <div class="flex flex-col md:flex-row items-center justify-around gap-6">
+                        <div>
+                            <h3 class="text-center font-medium mb-2">Simulated Motor</h3>
+                            <canvas id="motor-canvas" width="160" height="160"></canvas>
+                        </div>
+                        <div class="space-y-4 w-full md:w-auto">
+                            <div id="register-IO0PIN">
+                                <h4 class="font-medium text-center md:text-left">IO0PIN Register (Port 0)</h4>
+                                <div class="flex flex-wrap justify-center md:justify-start"></div>
+                            </div>
+                            <div id="register-IO0DIR">
+                                <h4 class="font-medium text-center md:text-left">IO0DIR Register (Port 0)</h4>
+                                <div class="flex flex-wrap justify-center md:justify-start"></div>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+                 <div class="bg-white p-6 rounded-lg shadow-lg min-h-[180px]">
+                    <h2 class="text-xl font-semibold mb-2 text-slate-900">Line-by-Line Explanation</h2>
+                    <div id="explanation-box" class="text-slate-600 transition-opacity duration-300">
+                        Welcome! Press 'Run' to start the simulation and see explanations here.
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <script>
+        document.addEventListener('DOMContentLoaded', () => {
+            const code = [
+                "#include <lpc21xx.h>",                                 // 0
+                "void clock_wise(void);",                               // 1
+                "void anti_clock_wise(void);",                          // 2
+                "unsigned long int var1, var2;",                        // 3
+                "unsigned int i, j, k;",                                // 4
+                "int main() {",                                         // 5
+                "    PINSEL0 = 0x00000000;",                           // 6
+                "    IO0DIR = 0x0000F000;",                            // 7
+                "    while (1) {",                                      // 8
+                "        for (j = 0; j < 5; j++) {",                   // 9 (Note: 50 -> 5 for faster sim)
+                "            clock_wise();",                           // 10
+                "        }",                                           // 11
+                "        for (k = 0; k < 6500; k++);",                  // 12 (Note: 65000 -> 6500)
+                "        for (j = 0; j < 5; j++) {",                   // 13
+                "            anti_clock_wise();",                       // 14
+                "        }",                                           // 15
+                "        for (k = 0; k < 6500; k++);",                  // 16
+                "    }",                                                // 17
+                "}",                                                    // 18
+                "void clock_wise(void) {",                              // 19
+                "    var1 = 0x00000800;",                                // 20
+                "    for (i = 0; i <= 3; i++) {",                       // 21
+                "        var1 = var1 << 1;",                            // 22
+                "        IO0PIN = var1;",                               // 23
+                "        for (k = 0; k < 300; k++);",                   // 24 (Note: 3000 -> 300)
+                "    }",                                                // 25
+                "}",                                                    // 26
+                "void anti_clock_wise(void) {",                         // 27
+                "    var1 = 0x00010000;",                                // 28
+                "    for (i = 0; i <= 3; i++) {",                       // 29
+                "        var1 = var1 >> 1;",                            // 30
+                "        IO0PIN = var1;",                               // 31
+                "        for (k = 0; k < 300; k++);",                   // 32
+                "    }",                                                // 33
+                "}",                                                    // 34
+            ];
+
+            const explanations = {
+                0: "Includes the header file specific to the LPC21xx microcontroller, which defines special function registers like IO0DIR and IO0PIN.",
+                1: "Declares the 'clock_wise' function, which will contain the logic for clockwise motor rotation.",
+                2: "Declares the 'anti_clock_wise' function, responsible for counter-clockwise rotation.",
+                3: "Declares a global variable 'var1' which will hold the bit pattern sent to the motor driver.",
+                4: "Declares global integer variables for use as loop counters.",
+                5: "The entry point of the program.",
+                6: "Configures pins P0.0-P0.15 as General Purpose I/O (GPIO), disabling any alternate functions.",
+                7: "Sets the direction for Port 0 pins. '0x0000F000' makes pins P0.12, P0.13, P0.14, and P0.15 outputs, which will connect to the stepper driver.",
+                8: "Starts an infinite loop to run the motor sequence continuously.",
+                9: "Starts a loop to repeat the clockwise rotation sequence. Each repetition performs a 4-step cycle.",
+                10: "Calls the function to execute one 4-step clockwise rotation sequence.",
+                12: "A software delay loop. This creates a pause after all clockwise rotations are complete.",
+                13: "Starts a loop to repeat the counter-clockwise rotation sequence.",
+                14: "Calls the function to execute one 4-step counter-clockwise rotation sequence.",
+                16: "Another software delay, creating a pause before the main loop repeats.",
+                19: "Starts the definition of the 'clock_wise' function.",
+                20: "Initializes 'var1' to 0x0800. This is a starting pattern that will be shifted into the correct pin positions.",
+                21: "Starts a loop that will run 4 times, corresponding to the 4 steps of a full-step motor sequence.",
+                22: "Bit-shifts 'var1' to the left by one position. This moves the '1' bit to the next pin in the sequence (e.g., from P0.11->P0.12, then P0.12->P0.13, etc.).",
+                23: "Writes the new pattern in 'var1' to the IO0PIN register. This energizes the corresponding motor coil, causing one step of rotation.",
+                24: "A short software delay to hold the coil energized long enough for the motor to physically move. This controls the motor's speed.",
+                27: "Starts the definition of the 'anti_clock_wise' function.",
+                28: "Initializes 'var1' to 0x10000. This is the starting pattern for the reverse sequence.",
+                29: "Starts a loop that will run 4 times for the 4 steps of the counter-clockwise sequence.",
+                30: "Bit-shifts 'var1' to the right by one position. This moves the '1' bit to the previous pin in the sequence (e.g., from P0.16->P0.15, then P0.15->P0.14, etc.).",
+                31: "Writes the new pattern to the IO0PIN register, energizing the next coil in the reverse sequence.",
+                32: "A short software delay to control the speed of the counter-clockwise rotation.",
+            };
+
+            const codeDisplay = document.getElementById('code-display');
+            const explanationBox = document.getElementById('explanation-box');
+            
+            const runBtn = document.getElementById('runBtn');
+            const pauseBtn = document.getElementById('pauseBtn');
+            const resetBtn = document.getElementById('resetBtn');
+            const speedSlider = document.getElementById('speed');
+
+            const motorCanvas = document.getElementById('motor-canvas');
+            const ctx = motorCanvas.getContext('2d');
+            
+            let simState = {};
+            let simInterval;
+
+            function resetState() {
+                if (simInterval) clearInterval(simInterval);
+                simState = {
+                    pc: 5, // Program Counter starts at main()
+                    callStack: [],
+                    vars: { i: 0, j: 0, k: 0, var1: 0 },
+                    registers: {
+                        IO0DIR: 0,
+                        IO0PIN: 0,
+                    },
+                    motorAngle: 0,
+                    running: false,
+                    speed: 1010 - speedSlider.value,
+                };
+                runBtn.classList.remove('hidden');
+                pauseBtn.classList.add('hidden');
+                updateAllUI();
+                explanationBox.textContent = "Simulation reset. Press 'Run' to start.";
+            }
+
+            function createRegisterUI(regId, numBits) {
+                const container = document.querySelector(`#register-${regId} > div`);
+                container.innerHTML = '';
+                for (let i = numBits - 1; i >= 0; i--) {
+                    if (i < 12 || i > 15) continue; // Only show relevant bits for motor
+                    const bitWrapper = document.createElement('div');
+                    bitWrapper.className = 'flex flex-col items-center p-1';
+                    const bitBox = document.createElement('div');
+                    bitBox.className = 'bit-box bg-slate-100';
+                    bitBox.textContent = '0';
+                    bitBox.id = `${regId}-bit-${i}`;
+                    const bitLabel = document.createElement('div');
+                    bitLabel.className = 'bit-label';
+                    bitLabel.textContent = `P0.${i}`;
+                    bitWrapper.appendChild(bitBox);
+                    bitWrapper.appendChild(bitLabel);
+                    container.appendChild(bitWrapper);
+                }
+            }
+
+            function updateRegisterUI(regId, value) {
+                for (let i = 12; i <= 15; i++) {
+                    const bit = (value >> i) & 1;
+                    const bitBox = document.getElementById(`${regId}-bit-${i}`);
+                    if (bitBox) {
+                        bitBox.textContent = bit;
+                        bitBox.className = 'bit-box ' + (bit ? 'bg-green-400 text-white' : 'bg-slate-100');
+                    }
+                }
+            }
+            
+            function drawMotor() {
+                const centerX = motorCanvas.width / 2;
+                const centerY = motorCanvas.height / 2;
+                const radius = 70;
+                
+                ctx.clearRect(0, 0, motorCanvas.width, motorCanvas.height);
+
+                // Stator
+                ctx.beginPath();
+                ctx.arc(centerX, centerY, radius, 0, 2 * Math.PI);
+                ctx.strokeStyle = '#94a3b8';
+                ctx.lineWidth = 10;
+                ctx.stroke();
+
+                // Rotor
+                ctx.beginPath();
+                ctx.moveTo(centerX, centerY);
+                ctx.lineTo(centerX + radius * 0.9 * Math.cos(simState.motorAngle), centerY + radius * 0.9 * Math.sin(simState.motorAngle));
+                ctx.strokeStyle = '#1e293b';
+                ctx.lineWidth = 6;
+                ctx.stroke();
+            }
+
+            function highlightLine(lineNumber) {
+                document.querySelectorAll('.code-line').forEach(line => line.classList.remove('highlight'));
+                const lineEl = document.getElementById(`line-${lineNumber}`);
+                if (lineEl) {
+                    lineEl.classList.add('highlight');
+                    lineEl.scrollIntoView({ behavior: 'smooth', block: 'center', inline: 'nearest' });
+                }
+            }
+
+            function updateAllUI() {
+                highlightLine(simState.pc);
+                updateRegisterUI('IO0DIR', simState.registers.IO0DIR);
+                updateRegisterUI('IO0PIN', simState.registers.IO0PIN);
+                drawMotor();
+                const explanation = explanations[simState.pc] || '';
+                if(explanation) {
+                    explanationBox.textContent = explanation;
+                }
+            }
+            
+            function step() {
+                if (!simState.running) return;
+                
+                let jumped = false;
+                const pc = simState.pc;
+                
+                // Super simplified interpreter
+                switch(pc) {
+                    case 6: simState.registers.PINSEL0 = 0; break;
+                    case 7: simState.registers.IO0DIR = 0x0000F000; break;
+                    case 8: break; // while(1)
+                    case 9: simState.vars.j = 0; break;
+                    case 10: 
+                        if (simState.vars.j < 5) {
+                            simState.callStack.push(pc + 1);
+                            simState.pc = 19;
+                            jumped = true;
+                        }
+                        break;
+                    case 11: 
+                        simState.vars.j++;
+                        if (simState.vars.j < 5) {
+                            simState.pc = 10;
+                        } else {
+                            simState.pc = 12;
+                        }
+                        jumped = true;
+                        break;
+                    case 12: /* Delay */ break;
+                    case 13: simState.vars.j = 0; break;
+                    case 14:
+                         if (simState.vars.j < 5) {
+                            simState.callStack.push(pc + 1);
+                            simState.pc = 27;
+                            jumped = true;
+                        }
+                        break;
+                    case 15:
+                        simState.vars.j++;
+                        if (simState.vars.j < 5) {
+                            simState.pc = 14;
+                        } else {
+                            simState.pc = 16;
+                        }
+                        jumped = true;
+                        break;
+                    case 16: /* Delay */ break;
+                    case 17: simState.pc = 8; jumped = true; break; // loop while
+                    
+                    // clock_wise
+                    case 19: /* func start */ break;
+                    case 20: simState.vars.var1 = 0x0800; break;
+                    case 21: simState.vars.i = 0; break;
+                    case 22: if (simState.vars.i <= 3) simState.vars.var1 = simState.vars.var1 << 1; break;
+                    case 23:
+                        if (simState.vars.i <= 3) {
+                             simState.registers.IO0PIN = simState.vars.var1;
+                             simState.motorAngle += Math.PI / 16;
+                        }
+                        break;
+                    case 24: /* Delay */ break;
+                    case 25: 
+                        simState.vars.i++;
+                        if (simState.vars.i <= 3) {
+                            simState.pc = 22;
+                        } else {
+                             simState.pc = 26;
+                        }
+                        jumped = true;
+                        break;
+                    case 26: simState.pc = simState.callStack.pop(); jumped = true; break; // return
+
+                    // anti_clock_wise
+                    case 27: /* func start */ break;
+                    case 28: simState.vars.var1 = 0x10000; break;
+                    case 29: simState.vars.i = 0; break;
+                    case 30: if (simState.vars.i <= 3) simState.vars.var1 = simState.vars.var1 >> 1; break;
+                    case 31: 
+                        if (simState.vars.i <= 3) {
+                            simState.registers.IO0PIN = simState.vars.var1;
+                            simState.motorAngle -= Math.PI / 16;
+                        }
+                        break;
+                    case 32: /* Delay */ break;
+                    case 33:
+                        simState.vars.i++;
+                        if (simState.vars.i <= 3) {
+                            simState.pc = 30;
+                        } else {
+                            simState.pc = 34;
+                        }
+                        jumped = true;
+                        break;
+                    case 34: simState.pc = simState.callStack.pop(); jumped = true; break; // return
+                }
+
+                if (!jumped) {
+                   simState.pc++;
+                }
+                 if(simState.pc > code.length) {
+                    simState.pc = 5; // Reset if something goes wrong
+                }
+
+                updateAllUI();
+            }
+
+            function setup() {
+                codeDisplay.innerHTML = code.map((line, index) => `<div class="code-line" id="line-${index}">${line.replace(/</g, "&lt;").replace(/>/g, "&gt;")}</div>`).join('');
+                createRegisterUI('IO0DIR', 16);
+                createRegisterUI('IO0PIN', 16);
+                resetState();
+
+                runBtn.addEventListener('click', () => {
+                    simState.running = true;
+                    runBtn.classList.add('hidden');
+                    pauseBtn.classList.remove('hidden');
+                    simInterval = setInterval(step, simState.speed);
+                });
+
+                pauseBtn.addEventListener('click', () => {
+                    simState.running = false;
+                    runBtn.classList.remove('hidden');
+                    pauseBtn.classList.add('hidden');
+                    if (simInterval) clearInterval(simInterval);
+                });
+
+                resetBtn.addEventListener('click', () => {
+                    resetState();
+                });
+                
+                speedSlider.addEventListener('input', (e) => {
+                    simState.speed = 1010 - e.target.value;
+                     if (simState.running) {
+                        clearInterval(simInterval);
+                        simInterval = setInterval(step, simState.speed);
+                    }
+                });
+            }
+
+            setup();
+        });
+    </script>
+</body>
+</html>
